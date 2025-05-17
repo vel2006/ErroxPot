@@ -1,7 +1,6 @@
-from logging import LogBasicData
-import threading
+import hashlib
+import json
 import os
-import re
 class FakeFileSystemError(Exception):
     def __init__(self, message):
         super().__init__(message)
@@ -9,227 +8,277 @@ class FileSystem():
     """
         Add \'.__init__()\' to see information about the \'FileSystem()\' object and its methods.
     """
-    def dive_into_directory(self, target_directory:str, item_fake_path:str):
+    def add_directory(self, target_directory:str, higher_directories:list):
         """
-            \'dive_into_directory\' is a method for scraping files and directories inside of a provided directory, it is ran by the \'__init__\' method for a \'FileSystem\' object. Is not designed to be called externally.
+            \'add_directory\' is a method for adding a logical directory to the current fake file system
+            This is used when creating a new blank directory, below is an explination of the arguments:
+
+            \"target_directory\";
+                Name of the directory to add, this has to be a string and will be the logical name of the directory for the file system.
+                A \'/\' is added to the name of the directory, so PLEASE ommit the forward slash \'/\'
+            
+            \"higher_directories\";
+                A list of keys (precursing directories) that will lead to the new directory in the file system
+            
+            Below is an example of how to call this function:
+
+            obj.add_directory(\"new_folder\", ["/", "home/", "that1ethicalhacker/", "Desktop/"])
+        """
+        path = self.FILES[higher_directories[0]]
+        directories = higher_directories[1:]
+        for key in directories:
+            path = path[key]
+        print(f"directory {target_directory} has last one as: {higher_directories[-1]}")
+        path[f"{target_directory}"] = {
+            "..":higher_directories[-1],
+            ".":target_directory
+            }
+    def add_file(self, file_name:str, file_data:list, higher_directories:list):
+        """
+            \'add_file\' is a method for adding a logical file to the current fake file system
+            This is used when adding a file to the fake file system and including it\'s data
+            Below is an explination of the arguments:
+
+            \"file_name\";
+                Name of the file to add, this has to be a string and will be the logical name for the file
+            
+            \"file_data\";
+                A list of the file\'s data, below is an explination of how to format the list:
+                    [10000, "C:\\Users\\Public\\Destop\\file.txt"]
+                       ^                        ^
+                       |                        |
+                       |                        |- Path to the file in the host computer\'s file system
+                       |
+                       |- Size of the file in bytes
+            
+            \"higher_directories\";
+                A list of keys (precursing directories) that will lead to the new directory in the file system
+            
+            Below is an example of how to call this function:
+            
+            obj.add_file(\"file.txt\", [1000, \"C:\\Users\\that1ethicalhacker\\Desktop\\file.txt\"], ["/", "home/", "that1ethicalhacker/", "Desktop/"])
+        """
+        path = self.FILES[higher_directories[0]]
+        higher_directories = higher_directories[1:]
+        for key in higher_directories:
+            path = path[key]
+        path[file_name] = file_data
+    def get_file_data(self, file_name:str, path_to_file:list):
+        """
+            \'get_file_data\' is a method for getting the information stored about a logical file
+
+            Below is an explination of arguments:
+
+            \"file_name\";
+                The wanted file\'s name, must be the same as what is stored in the fake file systm
+
+            \"path_to_file\";
+                A list of keys (precursing directories) that will lead to the new directory in the fake file system
+            
+            Below is an example of how to call this function:
+            
+            data = obj.get_file_data("file.txt", ["/", "home/", "that1ethicalhacker/", "Desktop/"])
+        """
+        return self.FILES[path_to_file][file_name]
+    def add_directory_to_file_system(self, target_directory:str, item_fake_path:str):
+        """
+            WARNING: THIS FUNCTION IS NOT DESIGNED TO BE DIRECTLY CALLED VIA ANY API INTERFACE, IT IS TO RUN WITHIN THE \'__init__\' FUNCTION
+
+            \'dive_into_directory\' is a method for scraping files and directories inside of a provided directory
 
             This version is designed to work with the fake file system that \'FileSystem\'s \'__init__\' creates. If the \'__init__\' has not been ran, this method will encounter an error and likely crash.
 
             For usage, follow the arguments below:
 
-                target_directory:str = The directory to search / scrape. This argument has to be a folder\'s full path, or the method will enounter an error and likely crash.
+                \"target_directory\";
+                    The directory to search / scrape. This argument has to be a folder\'s full path, or the method will enounter an error and likely crash.
 
-                item_fake_path:str = The fake path to the passed directory for the \'target_directory\' argument. This is the path that the user will be shown instead of the file\'s actual path.
+                \"item_fake_path\";
+                    The fake path to the passed directory for the \'target_directory\' argument. This is the path that the user will be shown instead of the file\'s actual path.
             
             Example usage:
 
                 system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                system.dive_into_directory(\"C:\\Users\\<user>\\Documents\\FakeFiles\\fake_logs\", \'/logs\')
+                system.dive_into_directory(\"C:\\Users\\<user>\\Documents\\FakeFiles\\fake_logs\", \'logs\\')
         """
-        items = os.listdir(target_directory)
-        threads = []
-        # Example of how files works: self.FILES[f"{item_fake_path}/{item}"] = (os.path.join(target_directory, item), 'directory', item)
-    def __init__(self, path_to_fake_file_directory:str, path_to_save_uploaded_files:str, path_to_save_logs:str):
+        if os.path.exists(target_directory) and os.path.isdir(target_directory):
+            print(f"[i] Starting conversion of directory: \'{target_directory}\'")
+            directorys = []
+            with os.scandir(target_directory) as entries:
+                for item in entries:
+                    if item.is_file():
+                        self.add_file(item.name, [item.stat().st_size, item.path], item_fake_path)
+                    elif item.is_dir():
+                        self.add_directory(item.name, item_fake_path)
+                        directorys.append([item.path, [item_fake_path, item.name]])
+                entries.close()
+            while True:
+                if len(directorys) != 0:
+                    to_remove = []
+                    for entry in directorys:
+                        with os.scandir(entry[0]) as entries:
+                            for item in entries:
+                                if item.is_file():
+                                    self.add_file(item.name, [item.stat().st_size, item.path], entry[1])
+                                elif item.is_dir():
+                                    self.add_directory(item.name, entry[-1])
+                                    fake_path = entry[1]
+                                    fake_path.append(item.name)
+                                    directorys.append([item.path, fake_path])
+                            entries.close()
+                        to_remove.append(entry)
+                    for entry in to_remove:
+                        directorys.remove(entry)
+                else:
+                    break
+        print("[i] All directories and files loaded!")
+    def save_file_system(self):
+        """
+            \'save_file_system\' will work to save the current FILES variable for later usage or for backing up the current system.
+
+            It takes no arguments, and returns nothing due to it simply saving the data to files.
+            If an error is encountered, a FakeFileSystemError is raised
+        """
+        file_system = json.dumps(self.FILES)
+        with open("saved_output.filesys", "w") as file_handle:
+            file_handle.write(file_system)
+            file_handle.close()
+        with open("saved_output_hash.filesys", "w") as file_handle:
+            hasher = hashlib.sha256()
+            hasher.update(bytes(file_system, 'utf-8'))
+            file_handle.write(f"{hasher.hexdigest()}")
+            file_handle.close()
+    def load_saved_file_system(self, file_system_path:str, file_system_hash_path:str):
+        """
+            WARNING: THIS FUNCTION IS NOT DESIGNED TO BE DIRECTLY CALLED VIA ANY API INTERFACE, IT IS TO RUN WITHIN THE \'__init__\' FUNCTION
+
+            \'load_saved_file_system\' will work by loading the requested file system into the current FileSystem object
+
+            Below is an explination of it\'s arguments:
+
+                \"file_system_path\";
+                    Path to the file holding the saved file system file, by default it is called \'saved_output.filesys\'
+                
+                \"file_system_hash_path\";
+                    Path to the file holding the saved file system file\'s hash, by default it is called \'saved_output_hash.filesys\'
+                    This is crutial to ensure that tampering with the file system by an idiot Junior dev does not go wrong, and if someone wants to mess with your honeypot they would have to overwrite the saved hash and saved file system
+        """
+        hash = ""
+        with open(file_system_hash_path, 'r') as file_handle:
+            hash = file_handle.read()
+            file_handle.close()
+        with open(file_system_path, 'r') as file_handle:
+            file_system = json.load(file_handle)
+            file_handle.close()
+        hasher = hashlib.sha256()
+        hasher.update(bytes(json.dumps(file_system), 'utf-8'))
+        if hasher.hexdigest() != hash:
+            raise FakeFileSystemError("[!] CRITICAL ERROR: SAVED FILE SYSTEM DOES NOT MATCH LOADED FILE SYSTEM HASH!")
+        else:
+            self.FILES = file_system
+            print("[i] Loaded saved file system with no issues!")
+    def __init__(self, custom_file_system:str, uploaded_file_directory:str, log_file_directory:str, saved_file_system:str=None, saved_file_hash:str=None):
         """
             \'FileSystem\' is an object that holds information about a fake file system used in honeypots and other cases.
 
-            It takes two arguments, those being the path to files that will be used in the honeypot, and the path to where uploaded files will be held.
+            Below is an explination of each argument:
 
-            It is designed that both passed arguments have to be directories, and will return an error if they are not.
+                \"custom_file_system\";
+                    Path to a directory holding the real files and directoies to be used inside of the fake file system
 
-            \'FileSystem\' (can have) a very slow \'start\' due to it calling \'dive_into_directory\' for the passed directory holding files for the honeypot (For more information of how \'dive_into_directory\' works, check it\'s description) so it is not advised to create a new object due to a new user or new connection.
+                \"uploaded_file_directory\";
+                    Path to a directory which will hold uploaded files from the honey-pot, it is suggested that this is an isolated directory or drive
+                
+                \"log_file_directory\";
+                    Path to a directory which will hold log files containing information about events within the fake file system
+                
+                \"saved_file_system\";
+                    Path to a file holding a system which was created by a \'FileSystem\' object\'s \"save_file_systen\" function
+                
+                \"saved_file_hash\";
+                    Path to a file holding the hash for the saved file system \'saved_file_system\' argument
 
-            Here is an example of it being used:
+            \'FileSystem\' (can and will likely have) a very slow \'start\' due to it loading the entire file system if not using a saved file system
 
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
+            Here is an example of it being used with using a saved file system:
+
+                file_system = FileSystem(None, None, None, \"C:\\Program Files\\ErroxPot\\fake_system\\custom_system.filesys\", \"C:\\Program Files\\ErroxPot\\fake_system\\system_hash.filesys\")
+            
+            Here is an example of it being used without using a saved file system:
+
+                file_ystem = FileSystem(\"C:\\Program Files\\ErroxPot\\fake_system\", \"C:\\Program Files\\Sandbox\", \"C:\\Program Files\\ErroxPot\\Logs\", None, None)
         """
-        if os.path.exists(path_to_fake_file_directory):
-            if os.path.isdir(path_to_fake_file_directory):
-                if os.path.isdir(path_to_save_uploaded_files):
-                    self.PATH_TO_FAKE_FILES = path_to_fake_file_directory
-                    self.PATH_TO_SAVE_FILES = path_to_save_uploaded_files
-                    self.PROCESS_LIMIT = 10
-                    self.PROCESSES = []
-                    self.THREAD_LIMIT = 20
-                    self.THREADS = []
-                    self.THREAD_LOCK = threading.Lock()
-                    self.CWD = "/"
-                    files = os.listdir(self.PATH_TO_FAKE_FILES)
-                    self.LOGING_ERROR = LogBasicData(path_to_save_logs, "log_instance_", 10)
-                    self.FILES = {}
-                    for item in files:
-                        if os.path.isdir(os.path.join(self.PATH_TO_FAKE_FILES, item)):
-                            self.FILES[item] = (os.path.join(self.PATH_TO_FAKE_FILES, item), 'directory')
-                            if len(self.THREADS) < self.THREAD_LIMIT:
-                                thread_handle = threading.Thread(target=self.dive_into_directory, args=(os.path.join(self.PATH_TO_FAKE_FILES, item), f"/{item}"))
-                                self.THREADS.append(thread_handle)
-                            else:
-                                for process in self.PROCESSES:
-                                    try:
-                                        if process.is_alive():
-                                            pass
-                                        else:
-                                            process.join()
-                                    except Exception:
-                                        pass
-                                    finally:
-                                        pass
-                                for thread in self.THREADS:
-                                    try:
-                                        if thread.is_alive():
-                                            pass
-                                        else:
-                                            thread.join()
-                                    except Exception:
-                                        pass
-                                    finally:
-                                        pass
-                                process_handle = multiprocessing.Process(target=self.dive_into_directory, args=(os.path.join(self.PATH_TO_FAKE_FILES, item), f"/{item}"))
-                                self.PROCESSES.append(process_handle)
-                        else:
-                            try:
-                                with open(os.path.join(self.PATH_TO_FAKE_FILES, item), 'rb') as file:
-                                    file_contents = file.read()
-                                    self.FILES[f"/{item}"] = (os.path.join(self.PATH_TO_FAKE_FILES, item), file_contents)
-                                    file.close()
-                            except Exception as error:
-                                print(f"Error with reading file {os.path.join(self.PATH_TO_FAKE_FILES, item)}, returned with error: {error}")
-                                print("Excluding from FakeFileSystem.")
+        if saved_file_system is None:
+            if os.path.exists(custom_file_system) and os.path.exists(custom_file_system):
+                if os.path.exists(uploaded_file_directory) and os.path.isdir(uploaded_file_directory):
+                    if os.path.exists(log_file_directory) and os.path.isdir(log_file_directory):
+                        self.PATH_TO_FAKE_FILES = custom_file_system
+                        self.PATH_TO_SAVE_FILES = uploaded_file_directory
+                        self.CWD = ["/"]
+                        self.FILES = {
+                            "/":{}
+                            }
+                        self.add_directory_to_file_system(custom_file_system, "/")
+                    else:
+                        raise FakeFileSystemError("Proveded Path to Directory \'log_file_directory\' Is Not A Directory")
                 else:
-                    raise FakeFileSystemError("Provided Path to Directory Holding Uploaded Files Is Not Directory.")
+                    raise FakeFileSystemError("Provided Path to Directory \'uploaded_file_directory\' Is Not A Directory.")
             else:
-                raise FakeFileSystemError("Provided Path to Directory Holding Fake Files Is Not Directory.")
+                raise FakeFileSystemError("Provided Path to Directory \'custom_file_system\' Is Not A Directory.")
         else:
-            raise FakeFileSystemError("Provided Path to Directory Holding Files For Fake Filesystem Does Not Exist.")
-    def get_fake_working_directory(self):
+            if os.path.exists(saved_file_system) and os.path.isfile(saved_file_system):
+                if os.path.exists(saved_file_hash) and os.path.isfile(saved_file_hash):
+                    self.load_saved_file_system(saved_file_system)
+                else:
+                    raise FakeFileSystemError("Privided Path to \'saved_file_hash\' Is Not A Vaild File")
+            else:
+                raise FakeFileSystemError("Provided Path to \'saved_file_system\' Is Not A Vaid File")
+    def get_current_directory(self):
         """
-            \'get_fake_working_directory\' takes no arguments, and simply returns the current fake directory that is currently in use by the client.
-
-            It is designed in such a way that you have to call it from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                client_current_directory = system.get_fake_working_directory()
+            \'get_current_directory\' is very simple and simply returns the CWD class variable
         """
         return self.CWD
-    def change_fake_working_directory(self, new_fake_working_directory:str):
+    def change_current_directory(self, new_directory:str):
         """
-            \'change_fake_working_directory\' takes one argument, that being the path to change the client\'s fake directory into.
+            \'change_current_directory\' will change the current fake file system depth to reflect the simulated space within the file system.
 
-            It doesnt return a value if succeded, however, in the event that \'change_fake_working_directory\' failes it will return a \'FakeFileSystemError\' claiming that the directory passed was not found or is a file.
-            This is due to how it works under the hood, instead of making a call to a real file, it instead checks for the wanted fake file inside of a dictionary that holds all of the current fake files / directories along with their data.
+            Below is an explination of it\'s arguments:
 
-            It is designed in such a way that you have to call it from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                system.change_fake_working_directory(\'/logs\')
+                \"new_directory\";
+                    The directory that will become the new current directory. Must be within the current directory, to go back one use \'..\'
         """
-        if new_fake_working_directory in self.FILES and self.FILES[new_fake_working_directory][1] == 'directory':
-            self.CWD = new_fake_working_directory
-        else:
-            return FakeFileSystemError(f"Directory {new_fake_working_directory} was not found or is a file.")
-    def upload_file(self, new_file_name:str, new_file_path:str, new_file_data:bytes):
+        if new_directory == ".." and self.CWD[-1] != "/":
+            self.CWD = self.CWD[:-2]
+        path = self.FILES[self.CWD[0]]
+        for i in self.CWD[1:]:
+            path = path[i]
+        if new_directory not in path.keys():
+            return "Doesnt exist."
+        self.CWD.append(new_directory)
+    def list_current_directory_all(self) -> dict:
         """
-            \'upload_file\' takes three arguments, those being the name of the new file, the file\'s path in the fake file system this was called from, and the data inside of the file in bytes
+            \'list_current_directory_all\' will list every bit of information about each file and directory within the current fake directory.
 
-            It returns either True or a \'FakeFileSystem\' error, the error will describe the issue in simple terms
-
-            It is designed in such a way that you have to call if from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                system.upload_file(\'uploaded_file.txt\', \'/uploads\', b\'This is a file\\nI think\')
+            It takes no arguments but returns a dictionary
         """
-        if new_file_name in self.FILES.keys():
-            return FakeFileSystemError(f"File {new_file_name} already exists.")
-        try:
-            with open(os.path.join(self.PATH_TO_SAVE_FILES, new_file_name), 'wb') as file:
-                file.write(new_file_data)
-                file.close()
-            self.FILES[new_file_path] = (os.path.join(self.PATH_TO_SAVE_FILES), new_file_data, new_file_name)
-            return True
-        except Exception as error:
-            self.LOGING_ERROR.log_data(f"\'upload_file\' encountered error; {error}")
-            return FakeFileSystemError(f"\'upload_file\' encountered error; \"{error}\"")
-        finally:
-            pass
-        return True
-    def remove_file(self, target_file_path:str):
+        path = self.FILES[self.CWD[0]]
+        higher_directories = self.CWD[1:]
+        for key in higher_directories:
+            path = path[key]
+        return path
+    def list_current_directory_items(self) -> dict:
         """
-            \'remove_file\' takes one argument, that being the full path of the file to be removed.
+            \'list_current_directory_items\' will list only the name of each file and directory within the current fake directory.
 
-            It checks the full path provided to see if the file exists and removes it if found.
+            This function is very similar to \'list_current_directory_all\' except for the increase in call time due to filtering the output
 
-            It retuns either True or a \'FakeFileSystem\' error, the error will describe the issue in simple terms
-
-            It is designed in such a way that you have to call it from a \'FakeFileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                system.remove_file(\'/uploads/uploaded_file.txt\')
+            It takes no arguments but returns a dictionary.
         """
-        if target_file_path not in self.FILES.keys():
-            return FakeFileSystemError(f"File {target_file_path} does not exist.")
-        try:
-            self.FILES.pop(target_file_path)
-        except Exception as error:
-            self.LOGING_ERROR.log_data(f"\'upload_file\' encountered error; {error}")
-            return FakeFileSystemError(f"\'remove_file\' encountered error; \"{error}\"")
-        finally:
-            pass
-        return True
-    def get_file_contents(self, file_path:str):
-        """
-            \'get_file_contents\' takes one argument, that being the path to a requested file inside of the fake file system.
-
-            It returns the contents of the passed file in byte format (b\"this is\\ndata\\n\\tinside of a file\\n\")
-
-            It is designed in such a way that you have to call it from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                example_file_contents = system.get_file_contents(\'example_file.txt\')
-        """
-        if file_path in self.FILES.keys() and self.FILES[file_path] != 'directory':
-            return self.FILES[file_path][1]
-        else:
-            return FakeFileSystemError(f"File {file_path} does not exist or is directory.")
-    def get_file_data(self, file_path:str):
-        """
-            \'get_file_data\' takes one argument, that being the path to a requested file inside of the fake file system.
-
-            It returns the data held inside of a dictionary containing all data about each file in the fake file system created with \'FileSystem\'.
-
-            It is designed in such a way that you have to call it from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                example_file_contents = system.get_file_data(\'example_file.txt\')
-        """
-        if file_path in self.FILES.keys() and self.FILES[file_path] != 'directory':
-            return self.FILES[file_path]
-        else:
-            return FakeFileSystemError(f"File {file_path} does not exist or is directory.")
-    def get_files_in_current_directory(self):
-        """
-            \'get_files_in_current_directory\' takes no arguments, it simply works off of the data held inside of the \'FileSystem\' object it is called from.
-
-            It returns a list of the files inside of the client\'s current fake working directory (which can be found by using \'get_fake_working_directory\')
-
-            It is designed in such a way that you have to call it from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                files_in_fake_directory = system.get_files_in_fake_working_directory()
-        """
-        files = []
-        for item in self.FILES.keys():
-            if self.CWD in item:
-                files.append(item)
-        return files
-    def get_all_files(self):
-        """
-            \'get_all_files\' takes no arguments, it simply works off of the data held inside of the \'FileSystem\' object it is called from.
-
-            It returns a tuple of all fake file paths within this object\'s instance, for more data on each file use \'get_file_contents\' and \'get_file_data\'.
-
-            It is designed in such a way that you have to call it from a \'FileSystem\' object as shown below:
-
-                system = FileSystem(\"C:\\Users\\<user>\\Documents\\FakeFiles\", \"C:\\Users\\<user>\\Documents\\UploadedFiles\")
-                all_fake_files_directory = system.get_all_files()
-        """
-        return tuple(self.FILES.keys())
+        path = self.FILES[self.CWD[0]]
+        higher_directories = self.CWD[1:]
+        for key in higher_directories:
+            path = path[key]
+        items = []
+        for item in path.keys():
+            items.append(item)
+        return items
